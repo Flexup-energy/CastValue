@@ -55,7 +55,7 @@ The backtester runs a linear programme (LP) for each day of the dataset, optimis
 | Scenario | Forecast used |
 |---|---|
 | Persistence | Yesterday's actual prices |
-| eMaps | eMaps DAA price forecast (benchmarked provider) |
+| Electricity Maps | Electricity Maps DAA price forecast (benchmarked provider) |
 | Perfect Foresight | Actual prices (theoretical ceiling) |
 
 Trading decisions are optimised on forecast prices. Realised margin is always calculated on **actual prices**.
@@ -74,8 +74,7 @@ CastValue/
 ├── DAA_optimizer.py            # Pyomo/GLPK LP optimizer
 ├── DAA_DE_LU_Formulation.pdf   # Mathematical formulation of the optimisation
 ├── DAA_DE_LU_Whitepaper.pdf    # Full whitepaper
-├── master_energy_data_v1.csv   # Consolidated input dataset
-└── DAA_Data/                   # Raw data and data pipeline notebooks
+└── master_energy_data_v1.csv   # Consolidated input dataset
 ```
 
 The notebook is structured in four sections:
