@@ -1,0 +1,320 @@
+\documentclass{article}
+\usepackage{graphicx}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{geometry}
+\geometry{margin=1in}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{mathtools}
+\usepackage{booktabs}
+\usepackage{siunitx}
+\usepackage{sectsty}
+\usepackage{enumitem}
+\sisetup{detect-all=true,round-mode=places,round-precision=3}
+
+\numberwithin{equation}{subsection}
+
+\title{Value of Forecasting Accuracy --- Day-Ahead Auction Only \\
+\large Methodology v1.1: Round-Trip Efficiency, Opportunity-Cost Bidding,\\
+and Volume-Balanced Paired Rejection}
+\author{Erwin Spolders, FlexUp GmbH}
+\date{April 2026}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+
+\subsection*{Overview}
+This document presents the v1.1 mathematical formulation of the CastValue framework: a comparison of the energy arbitrage margins of a Battery Energy Storage System (BESS) in the Day-Ahead Auction (DAA) power market in Germany, under different price forecasts.
+
+v1.1 extends the v1.0 formulation (see \texttt{DAA\_DE\_LU\_Formulation.pdf}) with the physical and market frictions a real trader faces:
+
+\begin{itemize}[itemsep=2pt, topsep=2pt]
+    \item \textbf{Round-Trip Efficiency (RTE)} of the BESS in the LP energy balance --- one MWh delivered to the grid requires more than one MWh purchased from the grid.
+    \item \textbf{Opportunity-cost bid derivation} --- limit prices for charge bids and discharge asks are derived from the forecast and adjusted for RTE.
+    \item \textbf{Out-of-the-money (OTM) rejection} --- bids/asks not in the money against the actual clearing price do not fill.
+    \item \textbf{Volume-balanced paired rejection} --- when OTM fills leave cleared charge and discharge volumes unmatched, additional MTUs are dropped on the oversubscribed side until volumes balance and end-of-day SOC equals start-of-day SOC.
+    \item \textbf{Rolling SOC} across days --- the day's initial SOC equals the previous day's terminal SOC (the LP is no longer forced to start and end at zero).
+\end{itemize}
+
+The Perfect Foresight benchmark in v1.1 is defined as the LP optimum given RTE, with bids placed at the clearing price (100\% fill). It is a ``perfect scheduling'' benchmark, not a frictionless one --- the $(1-\eta)$ round-trip loss is fully paid in the realised margin.
+
+The v1.1 dataset covers EPEX SPOT DE-LU at native quarter-hourly resolution from 18 October 2025 to 22 February 2026 (126 days). Because the dataset is entirely post the 1~October 2025 market structure change, the hourly coupling constraint of v1.0 is dropped.
+
+This document accompanies the Python implementation of the v1.1 optimization available on our GitHub.
+
+
+\section*{Symbols}
+Notation extends v1.0. Symbols introduced in v1.1 are flagged in the description column.
+
+\subsection*{Sets and indices}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Symbol & Meaning \\
+\midrule
+\(D=\{1,\dots,126\}\) & day index (18~Oct~2025 -- 22~Feb~2026) \\
+\(Q=\{1,\dots,96\}\) & quarter-hour index within the day \\
+\(Q^{+}=\{1,\dots,97\}\) & quarter-hour index for SOC including terminal state \\
+\(\mathcal{K}=\{\mathrm{P},1,\dots,k,\mathrm{PF}\}\) & price forecast index (Persistence, forecasts \(1\)\dots\(k\), Perfect Foresight) \\
+\(\hat{\lambda}^{(\mathrm{P})}\) & Persistence forecast, where \(\hat{\lambda}^{(\mathrm{P})}_{d,q}:=\lambda_{d-1,q}\) \\
+\(\hat{\lambda}^{(\mathrm{PF})}\) & Perfect Foresight forecast, where \(\hat{\lambda}^{(\mathrm{PF})}_{d,q}:=\lambda_{d,q}\) \\
+\bottomrule
+\end{tabular}
+
+\subsection*{Parameters}
+\begingroup
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Symbol & Meaning & Notes \\
+\midrule
+\(\texttt{cap}^{\text{energy}}\) & energy capacity [MWh] & \\
+\(\texttt{cap}^{\text{power}}\) & charge/discharge power limit [MW] & \\
+\(n_{\text{cycles}}\) & allowed daily equivalent full cycles [--] & \\
+\(L_d =\texttt{cap}^{\text{energy}}\cdot n_{\text{cycles}}\) & daily energy-throughput limit [MWh] & \\
+\(\hat{\lambda}^{\text{DAA, k}}_{d,q}\) & DAA forecast price from forecast \(k\) [EUR/MWh] & \\
+\(\lambda^{\text{DAA}}_{d,q}\) & DAA actual clearing price [EUR/MWh] & \\
+\(\Delta=\tfrac{1}{4}\) & quarter-hour duration [h] & \\
+\(\eta\) & round-trip efficiency [--] (\(\eta=0.85\)) & \textbf{new in v1.1} \\
+\bottomrule
+\end{tabular}
+\endgroup
+
+\subsection*{LP decision variables}
+\begingroup
+\renewcommand{\arraystretch}{1.5}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Symbol & Meaning \\
+\midrule
+\(\mathrm{CHA}^{\text{DAA}}_{q,k},\ \mathrm{DIS}^{\text{DAA}}_{q,k} \in [0,1]\) & normalized planned charge/discharge in DAA at \(q,k\) \\
+\(\mathrm{SOC}_{q,k}\) & planned state-of-charge at \(q\in Q^+\) [MWh] \\
+\bottomrule
+\end{tabular}
+\endgroup
+
+\subsection*{Derived quantities (post-LP, v1.1)}
+\begingroup
+\renewcommand{\arraystretch}{1.5}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Symbol & Meaning \\
+\midrule
+\(\bar{\lambda}^{\text{cha}}_{d,k},\ \bar{\lambda}^{\text{dis}}_{d,k}\) & volume-weighted average forecast charge / discharge price [EUR/MWh] \\
+\(B^{\text{cha}}_{q,k},\ B^{\text{dis}}_{q,k}\) & charge bid / discharge ask price [EUR/MWh] \\
+\(F^{\text{cha}}_{q,k},\ F^{\text{dis}}_{q,k} \in \{0,1\}\) & OTM fill indicators \\
+\(\widetilde{\mathrm{CHA}}_{q,k},\ \widetilde{\mathrm{DIS}}_{q,k}\) & post-OTM accepted volumes [normalized] \\
+\(\mathrm{CHA}^{*}_{q,k},\ \mathrm{DIS}^{*}_{q,k}\) & realised (delivered) volumes after paired rejection [normalized] \\
+\(\mathrm{SOC}^{*}_{q,d,k}\) & realised state-of-charge trajectory [MWh] \\
+\bottomrule
+\end{tabular}
+\endgroup
+
+\subsection*{Outputs}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Symbol & Meaning \\
+\midrule
+\(V_k\) & Value of forecast \(k\) compared with persistence forecast \(\mathrm{P}\) \\
+\(C_k\) & Cost of the error of forecast \(k\) compared with perfect foresight \(\mathrm{PF}\) \\
+\(AR_{\text{total}, k}\) & Total trading margin from DAA across all days \(d \in D\), given forecast \(k\) \\
+\(DR_{d, k}\) & Daily trading margin from DAA for day \(d\), given forecast \(k\) \\
+\bottomrule
+\end{tabular}
+
+
+\section{Calculating Outputs}
+
+\subsection{Forecast Value}
+The value (per MW traded BESS) of a price forecast equals the difference in the trading margin generated by trading on that forecast vs.\ the persistence forecast:
+\begin{equation}
+V_k = AR_{\text{total},k} - AR_{\text{total},P}
+\end{equation}
+
+\subsection{Cost of Forecast Error}
+The cost of forecast error equals the gap between Perfect Foresight and forecast \(k\):
+\begin{equation}
+C_k = AR_{\text{total}, PF} - AR_{\text{total},k}
+\end{equation}
+
+\subsection{Total and Daily Trading Margin}
+\begin{equation}
+AR_{\text{total}, k} = \sum_{d \in D} DR_{d, k}
+\end{equation}
+
+The daily trading margin uses \emph{realised} delivered volumes, evaluated at actual prices:
+\begin{equation}
+DR_{d, k} = \sum_{q\in Q} \lambda^{\text{DAA}}_{d,q} \cdot \texttt{cap}^{\text{power}} \cdot \Delta \cdot
+\bigl(\mathrm{DIS}^{*}_{q,d,k} - \mathrm{CHA}^{*}_{q,d,k}\bigr)
+\label{eq:daily-margin}
+\end{equation}
+
+The factor \(\texttt{cap}^{\text{power}}\cdot\Delta\) converts normalized values to grid-side MWh per quarter-hour. Note the trader pays for the full grid-side charge volume, including the \((1-\eta)\) portion lost to RTE.
+
+
+\section{Optimizing Daily Trading Decisions (LP)}
+
+\subsection{Day-Ahead Auction (DAA) --- v1.1}
+
+\subsection*{Objective}
+Maximise expected revenue at forecast prices, given decisions \(\mathrm{CHA}^{\mathrm{DAA}}_{q,k}, \mathrm{DIS}^{\mathrm{DAA}}_{q,k}\):
+\begin{equation}
+\operatorname*{max}_{\mathrm{CHA}^{\mathrm{DAA}}_{q,k},\,\mathrm{DIS}^{\mathrm{DAA}}_{q,k}}
+\sum_{q\in Q} \hat{\lambda}^{\mathrm{DAA}}_{q,k} \cdot \texttt{cap}^{\text{power}} \cdot \Delta \cdot
+\bigl(\mathrm{DIS}^{\mathrm{DAA}}_{q,k}-\mathrm{CHA}^{\mathrm{DAA}}_{q,k}\bigr)
+\end{equation}
+
+\subsection*{Constraints}
+SOC bounds:
+\begin{equation}
+0 \leq \mathrm{SOC}_q \leq \texttt{cap}^{\text{energy}} \quad \forall q \in Q^+
+\end{equation}
+
+\textbf{Rolling initial SOC} (v1.1 replaces the v1.0 condition \(\mathrm{SOC}_1 = 0\)):
+\begin{equation}
+\mathrm{SOC}_{1,d,k} = \mathrm{SOC}^{*}_{97,\,d-1,\,k} \qquad \text{with } \mathrm{SOC}^{*}_{97,\,0,\,k} := 0
+\end{equation}
+
+\textbf{Terminal SOC} non-negative but free (v1.1 replaces the v1.0 condition \(\mathrm{SOC}_{97} = 0\)):
+\begin{equation}
+\mathrm{SOC}_{97} \geq 0
+\end{equation}
+
+\textbf{RTE-aware energy balance} (v1.1 generalises the v1.0 step constraint):
+\begin{equation}
+\mathrm{SOC}_{q+1} = \mathrm{SOC}_{q}
++ \texttt{cap}^{\text{power}} \cdot \Delta \cdot
+\bigl(\eta \cdot \mathrm{CHA}^{\mathrm{DAA}}_q - \mathrm{DIS}^{\mathrm{DAA}}_q \bigr)
+\quad \forall q \in Q
+\label{eq:soc-step}
+\end{equation}
+i.e.\ each MWh purchased from the grid stores only \(\eta\) MWh in the battery; each MWh delivered to the grid draws 1~MWh from the battery.
+
+\textbf{Volume caps} (battery-side cycles): the discharge cap remains \(L_d\), and the charge cap is relaxed by \(1/\eta\) so the LP can deliver a full discharge cycle despite RTE losses:
+\begin{align}
+\texttt{cap}^{\text{power}} \cdot \Delta \cdot \sum_{q \in Q} \mathrm{CHA}^{\mathrm{DAA}}_q &\leq \frac{L_d}{\eta} \\
+\texttt{cap}^{\text{power}} \cdot \Delta \cdot \sum_{q \in Q} \mathrm{DIS}^{\mathrm{DAA}}_q &\leq L_d
+\end{align}
+
+The hourly coupling constraint of v1.0 is dropped (the v1.1 dataset is entirely 15-minute).
+
+
+\section{Bid Derivation}
+
+The trader posts limit prices for each LP-active MTU using a volume-weighted opportunity-cost rule.
+
+\subsection{Volume-weighted average forecast prices}
+
+Define the LP-planned grid-side energies:
+\begin{equation}
+E^{\text{cha}}_{q,k} := \texttt{cap}^{\text{power}} \cdot \Delta \cdot \mathrm{CHA}^{\mathrm{DAA}}_{q,k},
+\qquad
+E^{\text{dis}}_{q,k} := \texttt{cap}^{\text{power}} \cdot \Delta \cdot \mathrm{DIS}^{\mathrm{DAA}}_{q,k}.
+\end{equation}
+
+The volume-weighted average forecast charge and discharge prices for day \(d\), forecast \(k\) are:
+\begin{equation}
+\bar{\lambda}^{\text{cha}}_{d,k}
+= \frac{\sum_{q\in Q}\hat{\lambda}^{\text{DAA}}_{q,k}\,E^{\text{cha}}_{q,k}}
+       {\sum_{q\in Q}E^{\text{cha}}_{q,k}},
+\qquad
+\bar{\lambda}^{\text{dis}}_{d,k}
+= \frac{\sum_{q\in Q}\hat{\lambda}^{\text{DAA}}_{q,k}\,E^{\text{dis}}_{q,k}}
+       {\sum_{q\in Q}E^{\text{dis}}_{q,k}}.
+\end{equation}
+
+\subsection{Bid prices}
+
+For LP-active MTUs (\(\mathrm{CHA}^{\mathrm{DAA}}_{q,k} > 0\) or \(\mathrm{DIS}^{\mathrm{DAA}}_{q,k} > 0\)):
+\begin{align}
+B^{\text{cha}}_{q,k} &= \eta \cdot \bar{\lambda}^{\text{dis}}_{d,k}
+\qquad\text{if } \mathrm{CHA}^{\mathrm{DAA}}_{q,k} > 0 \\
+B^{\text{dis}}_{q,k} &= \frac{\bar{\lambda}^{\text{cha}}_{d,k}}{\eta}
+\qquad\text{if } \mathrm{DIS}^{\mathrm{DAA}}_{q,k} > 0
+\end{align}
+
+\textbf{Interpretation.} The trader pays no more for charging than the expected revenue from later discharging \emph{after} RTE loss; and asks no less for discharging than the cost of the energy charged \emph{gross of} RTE loss. These are the indifference prices implied by the day's forecast schedule.
+
+
+\section{Out-of-the-Money (OTM) Fill Rule}
+
+A bid fills only if it is in the money against the actual clearing price:
+\begin{align}
+F^{\text{cha}}_{q,k} &= \mathbf{1}\bigl[\,\mathrm{CHA}^{\mathrm{DAA}}_{q,k} > 0 \;\wedge\; B^{\text{cha}}_{q,k} \geq \lambda^{\text{DAA}}_{q,d}\,\bigr] \\
+F^{\text{dis}}_{q,k} &= \mathbf{1}\bigl[\,\mathrm{DIS}^{\mathrm{DAA}}_{q,k} > 0 \;\wedge\; B^{\text{dis}}_{q,k} \leq \lambda^{\text{DAA}}_{q,d}\,\bigr]
+\end{align}
+
+Post-OTM accepted volumes:
+\begin{equation}
+\widetilde{\mathrm{CHA}}_{q,k} = F^{\text{cha}}_{q,k} \cdot \mathrm{CHA}^{\mathrm{DAA}}_{q,k},
+\qquad
+\widetilde{\mathrm{DIS}}_{q,k} = F^{\text{dis}}_{q,k} \cdot \mathrm{DIS}^{\mathrm{DAA}}_{q,k}.
+\end{equation}
+
+
+\section{Volume-Balanced Paired Rejection}
+
+When forecast errors lead to asymmetric OTM fills, cleared charge and discharge volumes diverge. To enforce energy balance and avoid open positions at end-of-day, the worst-margin MTUs on the oversubscribed side are progressively rejected until volumes match.
+
+Define the cleared battery-side volumes after OTM:
+\begin{align}
+V^{\text{cha-stored}}_{d,k} &= \texttt{cap}^{\text{power}} \cdot \Delta \cdot \eta \cdot \sum_{q\in Q} \widetilde{\mathrm{CHA}}_{q,k} \\
+V^{\text{dis-drawn}}_{d,k} &= \texttt{cap}^{\text{power}} \cdot \Delta \cdot \sum_{q\in Q} \widetilde{\mathrm{DIS}}_{q,k}
+\end{align}
+
+\textbf{Procedure.} Initialise \(\mathrm{CHA}^{*}_{q,k} \leftarrow \widetilde{\mathrm{CHA}}_{q,k}\) and \(\mathrm{DIS}^{*}_{q,k} \leftarrow \widetilde{\mathrm{DIS}}_{q,k}\).
+
+\begin{enumerate}[itemsep=2pt, topsep=4pt]
+    \item If \(V^{\text{cha-stored}}_{d,k} > V^{\text{dis-drawn}}_{d,k}\): identify cleared charge MTUs and sort by descending actual price \(\lambda^{\mathrm{DAA}}_{q,d}\) (most-expensive purchase first = worst margin first). Sequentially reduce \(\mathrm{CHA}^{*}_{q,k}\) until battery-side volumes match.
+    \item If \(V^{\text{dis-drawn}}_{d,k} > V^{\text{cha-stored}}_{d,k}\): identify cleared discharge MTUs and sort by ascending actual price (cheapest sale first = worst margin first). Sequentially reduce \(\mathrm{DIS}^{*}_{q,k}\) until battery-side volumes match.
+    \item Otherwise (\(V^{\text{cha-stored}}_{d,k} = V^{\text{dis-drawn}}_{d,k}\)): no adjustment needed.
+\end{enumerate}
+
+The realised SOC trajectory is then computed analogously to \eqref{eq:soc-step}, using the realised volumes:
+\begin{equation}
+\mathrm{SOC}^{*}_{q+1,d,k} = \mathrm{SOC}^{*}_{q,d,k}
++ \texttt{cap}^{\text{power}} \cdot \Delta \cdot
+\bigl(\eta \cdot \mathrm{CHA}^{*}_{q,k} - \mathrm{DIS}^{*}_{q,k}\bigr)
+\quad \forall q \in Q
+\end{equation}
+with \(\mathrm{SOC}^{*}_{1,d,k} = \mathrm{SOC}^{*}_{97,d-1,k}\). By construction \(\mathrm{SOC}^{*}_{97,d,k} = \mathrm{SOC}^{*}_{1,d,k}\) --- daily energy balances, and there is no carryover or imbalance position.
+
+
+\section{Perfect Foresight Benchmark}
+
+Under Perfect Foresight (\(\hat{\lambda}^{\mathrm{DAA}}_{q,PF} = \lambda^{\mathrm{DAA}}_{q,d}\)), the trader knows the clearing price exactly and posts limit prices at clearing:
+\begin{equation}
+B^{\text{cha}}_{q,PF} = B^{\text{dis}}_{q,PF} = \lambda^{\text{DAA}}_{q,d}.
+\end{equation}
+All LP-scheduled MTUs are then in the money (\(F^{\text{cha}}_{q,PF} = F^{\text{dis}}_{q,PF} = 1\) wherever the LP is active), so:
+\begin{equation}
+\mathrm{CHA}^{*}_{q,PF} = \mathrm{CHA}^{\mathrm{DAA}}_{q,PF},
+\qquad
+\mathrm{DIS}^{*}_{q,PF} = \mathrm{DIS}^{\mathrm{DAA}}_{q,PF}.
+\end{equation}
+Paired rejection is a no-op. The Perfect Foresight margin equals the LP optimum subject to RTE --- not a frictionless ceiling. The \((1-\eta)\) round-trip loss is fully reflected in \eqref{eq:daily-margin}.
+
+
+\section{Summary of Differences from v1.0}
+
+\begin{tabular}{@{}p{0.36\linewidth}p{0.28\linewidth}p{0.32\linewidth}@{}}
+\toprule
+Aspect & v1.0 & v1.1 \\
+\midrule
+RTE in LP & none (1:1 efficiency) & \(\eta=0.85\) on charge side \\
+Charge-side volume cap & \(L_d\) & \(L_d / \eta\) \\
+Initial SOC & \(\mathrm{SOC}_1 = 0\) & rolling: \(\mathrm{SOC}_{1,d} = \mathrm{SOC}^{*}_{97,d-1}\) \\
+Terminal SOC & \(\mathrm{SOC}_{97} = 0\) & \(\mathrm{SOC}_{97} \geq 0\) (free) \\
+Hourly coupling & active before 1~Oct~2025 & dropped (15-min only) \\
+Bid pricing & implicit (zero-cap, infinite-floor) & opportunity-cost, RTE-adjusted \\
+Bid acceptance & 100\% (guaranteed) & OTM check vs.\ actual \\
+Volume reconciliation & none (LP guarantees by \(\mathrm{SOC}_{97}=0\)) & paired rejection \\
+Perfect Foresight & frictionless LP optimum & RTE-aware LP optimum, bids at clearing \\
+\bottomrule
+\end{tabular}
+
+\end{document}

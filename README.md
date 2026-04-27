@@ -50,7 +50,9 @@ This has direct implications for how forecast quality should be specified in com
 
 ## Methodology
 
-The backtester runs a linear programme (LP) for each day of the dataset, optimising BESS charge/discharge decisions to maximise expected DAA revenue, subject to energy capacity, power capacity, and cycle constraints. Three scenarios are evaluated for each day:
+### v1.0 — Single-cycle deterministic dispatch
+
+The original backtester runs a linear programme (LP) for each day of the dataset, optimising BESS charge/discharge decisions to maximise expected DAA revenue, subject to energy capacity, power capacity, and cycle constraints. Three scenarios are evaluated for each day:
 
 | Scenario | Forecast used |
 |---|---|
@@ -60,9 +62,23 @@ The backtester runs a linear programme (LP) for each day of the dataset, optimis
 
 Trading decisions are optimised on forecast prices. Realised margin is always calculated on **actual prices**.
 
-The dataset covers the German/Luxembourg DAA market (EPEX SPOT DE-LU) across 2024–2025, including the October 2025 market structure change from hourly to quarter-hourly DAA products.
+The v1.0 dataset covers the German/Luxembourg DAA market (EPEX SPOT DE-LU) across 2024–2025, including the October 2025 market structure change from hourly to quarter-hourly DAA products.
 
-For the full mathematical formulation see `DAA_DE_LU_Formulation.pdf`.
+For the full v1.0 mathematical formulation see `DAA_DE_LU_Formulation.pdf`.
+
+### v1.1 — Realistic trading frictions
+
+v1.1 (in `v1.1/`) extends the model with the physical and market frictions a real trader faces:
+
+- **Round-Trip Efficiency (85%)** in the LP energy balance — every MWh delivered to the grid requires ~1.176 MWh purchased, so the LP only schedules trades that survive RTE losses.
+- **Opportunity-cost bidding** — charge bids = avg forecast discharge price × RTE; discharge asks = avg forecast charge price ÷ RTE. These are the realistic limit prices a desk would post given the forecast.
+- **Out-of-the-money rejection** — if the actual clearing price is unfavourable vs. the posted bid/ask, the MTU does not fill.
+- **Volume-balanced paired rejection** — when OTM fills leave charge and discharge volumes unbalanced, worst-margin MTUs are dropped on the oversubscribed side until volumes match. This forces end-of-day SOC = start-of-day SOC, so forecast accuracy directly drives the fill rate.
+- **Perfect Foresight** in v1.1 is defined as the LP optimum given RTE, with bids placed at clearing prices (100% fill rate). It still pays the RTE loss — it is a "perfect scheduling" benchmark, not a frictionless one.
+
+The v1.1 dataset (`v1.1/master_energy_data_v2.csv`) covers DE-LU at native 15-minute resolution from 18 October 2025 through 22 February 2026 (126 days).
+
+For the full v1.1 mathematical formulation see `v1.1/DAA_DE_LU_Formulation_v1.1.pdf`.
 
 ---
 
@@ -70,18 +86,32 @@ For the full mathematical formulation see `DAA_DE_LU_Formulation.pdf`.
 
 ```
 CastValue/
-├── DAA_DE_LU_Bench.ipynb       # Main analysis notebook (4 sections, see below)
-├── DAA_optimizer.py            # Pyomo/GLPK LP optimizer
-├── DAA_DE_LU_Formulation.pdf   # Mathematical formulation of the optimisation
-├── DAA_DE_LU_Whitepaper.pdf    # Full whitepaper
-└── master_energy_data_v1.csv   # Consolidated input dataset
+├── README.md
+├── LICENSE
+├── DAA_DE_LU_Bench.ipynb           # v1.0 main analysis notebook (4 sections, see below)
+├── DAA_optimizer.py                # v1.0 Pyomo/GLPK LP optimizer
+├── DAA_DE_LU_Formulation.pdf       # v1.0 mathematical formulation
+├── DAA_DE_LU_Whitepaper.pdf        # v1.0 whitepaper
+├── master_energy_data_v1.csv       # v1.0 dataset (2024–2025)
+└── v1.1/
+    ├── DAA_DE_LU_Bench.ipynb       # v1.1 notebook
+    ├── DAA_optimizer.py            # v1.1 optimizer (RTE + opportunity-cost bidding)
+    ├── master_energy_data_v2.csv   # 15-min DE-LU dataset (Oct 2025 → Feb 2026)
+    ├── DAA_DE_LU_Formulation_v1.1.pdf   # v1.1 mathematical formulation
+    ├── DAA_DE_LU_Formulation_v1.1.tex   # LaTeX source for the v1.1 formulation
+    ├── 20251006 Value of forecasting - EMaps - Whitepaper draft v3.pdf  # v1.1 whitepaper
+    ├── wp_annual_results.png       # Whitepaper figure: total margin vs Persistence baseline
+    ├── wp_cumulative_margin.png    # Whitepaper figure: cumulative margin curves
+    └── wp_example_day.png          # Whitepaper figure: example-day deep dive
 ```
 
-The notebook is structured in four sections:
+The v1.0 notebook is structured in four sections:
 1. **Optimisation & backtest** — runs the LP for all days and all scenarios
 2. **Annual results** — cumulative margin chart and CastValue bar chart
 3. **Example day** — price forecasts, dispatch decisions, and realised margin for a single day
 4. **The MAE Paradox** — scatter plot and deep-dive on the paradox between forecast accuracy and profit capture
+
+The v1.1 notebook follows the same four-section structure, applied to the post-October 2025 15-minute dataset and the v1.1 methodology.
 
 ---
 
@@ -94,9 +124,11 @@ To run CastValue on your own forecast data, prepare a CSV with the following col
 | `timestamp_utc` | Quarter-hour timestamps in UTC |
 | `daa_actuals` | Actual DAA settlement prices [EUR/MWh] |
 | `daa_persistence_forecast` | Persistence forecast (previous day's actuals) [EUR/MWh] |
-| `daa_provider_forecast` | Your forecast [EUR/MWh] |
+| `daa_em_forecast` | Your forecast [EUR/MWh] (rename to your provider) |
 
-Replace the `daa_provider_forecast` column in `master_energy_data_v1.csv` with your own data, update the scenario name in the notebook, and run all cells.
+For **v1.0**: replace the provider column in `master_energy_data_v1.csv` with your data, update the scenario name in `DAA_DE_LU_Bench.ipynb`, and run all cells.
+
+For **v1.1**: replace the `daa_em_forecast` column in `v1.1/master_energy_data_v2.csv` with your data, update the scenario name in `v1.1/DAA_DE_LU_Bench.ipynb`, and run all cells. v1.1 expects native 15-minute resolution.
 
 ### Dependencies
 
