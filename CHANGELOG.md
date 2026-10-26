@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.3
+
+Bug fix: `castvalue.__version__` was a hardcoded string that drifted out
+of sync with `pyproject.toml`'s version across the 1.3.1 and 1.3.2 patch
+releases (stuck at `"1.3.0"`) -- caught via `castvalue-compute` integration
+testing, where every result's `provenance.castvalue_version` was silently
+wrong. Now read dynamically from installed package metadata
+(`importlib.metadata.version("castvalue_bench")`), so it can't drift again.
+No methodology/numerics changes versus 1.3.2.
+
 ## 1.3.2
 
 PyPI distribution renamed to `castvalue_bench` -- `castvalue` collided
