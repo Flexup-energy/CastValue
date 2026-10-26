@@ -11,7 +11,10 @@ class Optimizer:
     def optimize_daa(self, n_cycles, energy_cap, power_cap, daa_price_vector,
                      initial_soc=0.0, rte=0.85):
         """
-        Optimizes DAA charge/discharge schedule for a 96-interval (15-min) price vector.
+        Optimizes DAA charge/discharge schedule for an N-interval (15-min) price vector.
+
+        N is 96 on an ordinary day; 92 or 100 on the two annual Berlin DST
+        transition days (spring-forward / fall-back), which are 23h/25h long.
 
         Energy balance uses charge-side RTE losses:
           SOC[q+1] = SOC[q] + rte * pf * cha[q] - pf * dis[q]
@@ -24,16 +27,17 @@ class Optimizer:
             n_cycles: max discharge cycles per day (battery-side)
             energy_cap: battery energy capacity (MWh)
             power_cap: battery power capacity (MW)
-            daa_price_vector: list of 96 forecast prices (EUR/MWh)
+            daa_price_vector: list of N forecast prices (EUR/MWh)
             initial_soc: starting SOC in MWh (for rolling SOC across days)
             rte: round-trip efficiency (default 0.85)
 
         Returns:
-            (soc, cha, dis) — lists of 96 values each
+            (soc, cha, dis) — lists of N values each
         """
+        n = len(daa_price_vector)
         model = pyo.ConcreteModel()
-        model.Q = pyo.RangeSet(1, 96)
-        model.Q_plus_1 = pyo.RangeSet(1, 97)
+        model.Q = pyo.RangeSet(1, n)
+        model.Q_plus_1 = pyo.RangeSet(1, n + 1)
         volume_limit = energy_cap * n_cycles
         pf = power_cap / 4.0
 
@@ -43,7 +47,7 @@ class Optimizer:
 
         model.cons = pyo.ConstraintList()
         model.cons.add(model.soc[1] == initial_soc)
-        model.cons.add(model.soc[97] >= 0)
+        model.cons.add(model.soc[n + 1] >= 0)
 
         for q in model.Q:
             model.cons.add(model.soc[q] >= 0)
@@ -88,8 +92,10 @@ class Optimizer:
         the LP energy-balance constraint.
 
         Args:
-            forecasts: dict with key "daa" → list of 96 forecast prices
-            actuals:   dict with key "daa" → list of 96 actual prices
+            forecasts: dict with key "daa" → list of N forecast prices
+            actuals:   dict with key "daa" → list of N actual prices (same N
+                as forecasts — N is 96 on an ordinary day, 92/100 on the two
+                annual Berlin DST transition days)
             power_cap: MW
             energy_cap: MWh
             n_cycles: max cycles per day
@@ -105,7 +111,7 @@ class Optimizer:
             fill_rate           — fraction of active MTUs filled
             avg_charge_price    — volume-weighted avg forecast charge price
             avg_discharge_price — volume-weighted avg forecast discharge price
-            soc                 — realized SOC trajectory (96 values)
+            soc                 — realized SOC trajectory (N values)
             end_soc             — equals initial_soc by construction
             cha / dis           — realized charge/discharge rates
             cha_planned / dis_planned — LP-optimized rates before OTM
@@ -121,6 +127,7 @@ class Optimizer:
 
         forecast = np.array(forecasts["daa"])
         actual   = np.array(actuals["daa"])
+        n = len(forecast)
         cha_plan = np.array(cha_planned)
         dis_plan = np.array(dis_planned)
         pf = power_cap / 4.0
@@ -138,21 +145,21 @@ class Optimizer:
         # Bid prices adjusted for RTE (or clearing-price bids under perfect foresight)
         bid_price = np.copy(actual) if perfect_foresight else np.copy(forecast)
         if not perfect_foresight:
-            for q in range(96):
+            for q in range(n):
                 if cha_plan[q] > 1e-6:
                     bid_price[q] = avg_discharge_price * rte
                 elif dis_plan[q] > 1e-6:
                     bid_price[q] = avg_charge_price / rte
 
         # OTM check: binary per MTU (skipped under perfect foresight — all fill)
-        cha_accepted = np.zeros(96)
-        dis_accepted = np.zeros(96)
+        cha_accepted = np.zeros(n)
+        dis_accepted = np.zeros(n)
 
         if perfect_foresight:
             cha_accepted = cha_plan.copy()
             dis_accepted = dis_plan.copy()
         else:
-            for q in range(96):
+            for q in range(n):
                 if cha_plan[q] > 1e-6 and bid_price[q] >= actual[q]:
                     cha_accepted[q] = cha_plan[q]
                 elif dis_plan[q] > 1e-6 and bid_price[q] <= actual[q]:
@@ -199,15 +206,15 @@ class Optimizer:
                     excess = 0.0
 
         # Realized SOC trajectory with charge-side RTE loss
-        soc_real = np.zeros(97)
+        soc_real = np.zeros(n + 1)
         soc_real[0] = initial_soc
-        for q in range(96):
+        for q in range(n):
             soc_real[q + 1] = soc_real[q] + rte * cha_final[q] * pf - dis_final[q] * pf
 
         fill_mask = ((cha_final > 1e-6) | (dis_final > 1e-6)).astype(float)
 
         profit = float(np.sum((dis_final - cha_final) * actual) * pf)
-        end_soc = float(soc_real[96])
+        end_soc = float(soc_real[n])
 
         active = (cha_plan > 1e-6) | (dis_plan > 1e-6)
         fill_rate = float(np.mean(fill_mask[active])) if active.any() else 1.0
@@ -219,7 +226,7 @@ class Optimizer:
             "fill_rate":          fill_rate,
             "avg_charge_price":   avg_charge_price,
             "avg_discharge_price": avg_discharge_price,
-            "soc":                soc_real[:96].tolist(),
+            "soc":                soc_real[:n].tolist(),
             "end_soc":            end_soc,
             "cha":                cha_final.tolist(),
             "dis":                dis_final.tolist(),
