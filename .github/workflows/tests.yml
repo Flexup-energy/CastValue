@@ -7,9 +7,8 @@ on:
 
 jobs:
   # Base install (no `bess` extra) must not require pyomo/GLPK at all.
-  # No core/PV tests exist yet (Milestones 2-3) -- this job is an import
-  # smoke test until there's something extras-free to run under pytest.
-  import-without-bess:
+  # core and pv must both fully pass without it; bess has its own job below.
+  test-core-and-pv:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -21,6 +20,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[test]"
       - run: python -c "import castvalue; print(castvalue.__version__)"
+      - run: pytest tests/core -v
+      # tests/pv doesn't exist yet (Milestone 3) -- added here once it does.
 
   test-bess:
     runs-on: ubuntu-latest
@@ -39,7 +40,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    needs: [import-without-bess, test-bess]
+    needs: [test-core-and-pv, test-bess]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
