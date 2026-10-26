@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.2
+
+PyPI distribution renamed to `castvalue_bench` -- `castvalue` collided
+with PyPI's typosquat-prevention check (too similar to the existing,
+unrelated `cast-value` package). Python import path is unchanged: still
+`import castvalue`. No runtime/methodology changes versus 1.3.1.
+
 ## 1.3.1
 
 Packaging fix: `pandas` is needed by the BESS DAA golden regression test
