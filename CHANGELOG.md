@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.4
+
+Metadata only: PyPI package description updated to "Open multi-benchmark
+framework measuring the money value of forecasts in energy trading". No
+code/methodology changes versus 1.3.3.
+
 ## 1.3.3
 
 Bug fix: `castvalue.__version__` was a hardcoded string that drifted out
