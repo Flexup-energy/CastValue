@@ -20,8 +20,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[test]"
       - run: python -c "import castvalue; print(castvalue.__version__)"
-      - run: pytest tests/core -v
-      # tests/pv doesn't exist yet (Milestone 3) -- added here once it does.
+      - run: pytest tests/core tests/pv -v
 
   test-bess:
     runs-on: ubuntu-latest
