@@ -5,3 +5,7 @@ __pycache__/
 anaconda_projects/
 .DS_Store
 web/
+*.egg-info/
+build/
+dist/
+.pytest_cache/

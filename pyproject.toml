@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "castvalue"
-version = "1.2.0"
-description = "Open backtesting framework measuring the EUR/MW value of DAA price forecasts for BESS"
+version = "1.3.0"
+description = "Open multi-benchmark framework measuring the EUR/MW value of forecasts in energy trading and storage dispatch"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 authors = [{ name = "FlexUp GmbH" }]
-keywords = ["energy", "forecasting", "bess", "battery-storage", "linear-programming", "day-ahead", "power-markets"]
+keywords = ["energy", "forecasting", "bess", "battery-storage", "linear-programming", "day-ahead", "power-markets", "pv", "imbalance", "intraday", "shapley"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
@@ -23,8 +23,21 @@ classifiers = [
 ]
 dependencies = [
   "numpy>=1.24",
-  "pyomo>=6.6",
 ]
+
+[project.optional-dependencies]
+# BESS benchmarks (castvalue.bess.*) need pyomo to build the LP, plus a
+# solver binary that pyomo calls out to. The current BESS DAA benchmark uses
+# GLPK (`pyo.SolverFactory("glpk", ...)`) — a system binary, not a pip
+# package: install it separately (e.g. `conda install -c conda-forge glpk`
+# or `apt install glpk-utils`) and point `Optimizer(solverpath_exe=...)` at
+# the `glpsol` binary.
+bess = ["pyomo>=6.6"]
+# scipy is a PV-imbalance *test* dependency only (the HiGHS LP oracle that
+# cross-checks the vertex-enumeration solver in tests/pv/imbalance/) — never
+# imported from runtime code.
+test = ["pytest>=7", "scipy>=1.10"]
+all = ["castvalue[bess,test]"]
 
 [project.urls]
 Homepage = "https://github.com/Flexup-energy/CastValue"
@@ -32,3 +45,6 @@ Issues = "https://github.com/Flexup-energy/CastValue/issues"
 
 [tool.setuptools]
 py-modules = ["DAA_optimizer"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

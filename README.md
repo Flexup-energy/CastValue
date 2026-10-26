@@ -1,6 +1,8 @@
-# CastValue — Quantifying the EUR/MW Value of DAA Price Forecasts for BESS
+# CastValue — Quantifying the EUR/MW Value of Forecasts in Energy Trading
 
-**CastValue** is an open backtesting framework that measures what a Day-Ahead Auction (DAA) price forecast is actually worth — in euros per megawatt of BESS capacity, per year.
+**CastValue** is an open, multi-benchmark framework that measures what a forecast is actually worth in a real trading/dispatch decision — in euros, not error metrics.
+
+This repository currently contains one fully built benchmark (`castvalue.bess.daa`, described below) plus a second one under active development (`castvalue.pv.imbalance`, a PV imbalance-cost benchmark) and a placeholder for a third (`castvalue.bess.multimarket`, scope only — see `src/castvalue/bess/multimarket/README.md`). The rest of this README describes the original, fully-built BESS day-ahead-only benchmark.
 
 Most forecast providers sell on MAE. Most traders buy on MAE. CastValue shows why that is the wrong metric, and replaces it with one that directly reflects trading P&L.
 
@@ -70,7 +72,7 @@ Trading decisions are optimised on forecast prices. Realised margin is always ca
 
 The dataset covers DE-LU at native 15-minute resolution from 18 October 2025 through 22 February 2026 (126 days).
 
-For the full mathematical formulation see `DAA_DE_LU_Formulation_v1.1.pdf`.
+For the full mathematical formulation see `docs/methodology/DAA_DE_LU_Formulation_v1.1.pdf`.
 
 > **Earlier methodology (v1.0):** the original single-cycle deterministic dispatch (no RTE, no OTM, fixed daily SOC=0) is preserved at the [`v1.0` git tag](https://github.com/flexup-energy/CastValue/releases/tag/v1.0). Check out that tag to access the v1.0 notebook, optimizer, formulation PDF, and whitepaper.
 
@@ -82,15 +84,24 @@ For the full mathematical formulation see `DAA_DE_LU_Formulation_v1.1.pdf`.
 CastValue/
 ├── README.md
 ├── LICENSE
-├── DAA_DE_LU_Bench.ipynb                                          # main analysis notebook
-├── DAA_optimizer.py                                               # Pyomo/GLPK LP optimizer
-├── master_energy_data_v2.csv                                      # 15-min DE-LU dataset (Oct 2025 → Feb 2026)
-├── DAA_DE_LU_Formulation_v1.1.pdf                                 # mathematical formulation
-├── DAA_DE_LU_Formulation_v1.1.tex                                 # LaTeX source for the formulation
-├── 20251006 Value of forecasting - EMaps - Whitepaper draft v3.pdf  # whitepaper
-├── wp_annual_results.png                                          # figure: total margin vs Persistence baseline
-├── wp_cumulative_margin.png                                       # figure: cumulative margin curves
-└── wp_example_day.png                                             # figure: example-day deep dive
+├── DAA_optimizer.py                     # backward-compat shim -> castvalue.bess.daa.optimizer (deprecated)
+├── pyproject.toml
+├── src/castvalue/
+│   ├── core/                            # shared machinery: coalitions, Shapley/Harsanyi, pricing, ceiling checks
+│   ├── bess/
+│   │   ├── daa/optimizer.py             # this benchmark: Pyomo/GLPK LP optimizer
+│   │   └── multimarket/                 # planned, not implemented — raises NotImplementedError
+│   └── pv/imbalance/                    # PV imbalance-cost benchmark, under active development
+├── examples/
+│   └── DAA_DE_LU_Bench.ipynb            # main analysis notebook for this benchmark
+├── data/
+│   └── master_energy_data_v2.csv        # 15-min DE-LU dataset (Oct 2025 → Feb 2026)
+├── docs/
+│   ├── methodology/                     # DAA_DE_LU_Formulation_v1.1.pdf/.tex
+│   ├── whitepaper/                      # whitepaper PDF
+│   └── img/                             # wp_annual_results.png, wp_cumulative_margin.png, wp_example_day.png
+└── tests/
+    └── bess/daa/golden/                 # golden regression fixtures guarding this benchmark's numerics
 ```
 
 The notebook is structured in four sections:
@@ -112,20 +123,15 @@ To run CastValue on your own forecast data, prepare a CSV with the following col
 | `daa_persistence_forecast` | Persistence forecast (previous day's actuals) [EUR/MWh] |
 | `daa_em_forecast` | Your forecast [EUR/MWh] (rename to your provider) |
 
-Replace the `daa_em_forecast` column in `master_energy_data_v2.csv` with your own data, update the scenario name in `DAA_DE_LU_Bench.ipynb`, and run all cells. The notebook expects native 15-minute resolution.
+Replace the `daa_em_forecast` column in `data/master_energy_data_v2.csv` with your own data, update the scenario name in `examples/DAA_DE_LU_Bench.ipynb`, and run all cells. The notebook expects native 15-minute resolution.
 
-### Dependencies
+### Installing
 
 ```
-python >= 3.10
-pyomo
-glpk
-pandas
-numpy
-matplotlib
+pip install "castvalue[bess]"
 ```
 
-Install GLPK via conda: `conda install -c conda-forge glpk`
+This benchmark also needs a GLPK solver binary on your system (not a pip package) — e.g. `conda install -c conda-forge glpk`, then point `Optimizer(solverpath_exe=...)` at the installed `glpsol` binary. Running the notebook additionally needs `pandas`, `matplotlib`, and `jupyter`.
 
 ---
 
