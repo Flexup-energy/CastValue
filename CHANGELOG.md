@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.1
+
+Packaging fix: `pandas` is needed by the BESS DAA golden regression test
+(reads `data/master_energy_data_v2.csv`) but was never declared as a
+dependency anywhere -- it only worked locally because the dev environment
+already had it installed globally. Caught by CI on the real v1.3.0 tag
+(the `test-bess` job failed with `ModuleNotFoundError`). Added to the
+`test` extra. No runtime/methodology changes versus 1.3.0.
+
 ## 1.3.0
 
 Multi-benchmark package restructure. `castvalue` is no longer a single flat
