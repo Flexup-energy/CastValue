@@ -128,7 +128,7 @@ Replace the `daa_em_forecast` column in `data/master_energy_data_v2.csv` with yo
 ### Installing
 
 ```
-pip install "castvalue[bess]"
+pip install "castvalue_bench[bess]"
 ```
 
 This benchmark also needs a GLPK solver binary on your system (not a pip package) — e.g. `conda install -c conda-forge glpk`, then point `Optimizer(solverpath_exe=...)` at the installed `glpsol` binary. Running the notebook additionally needs `pandas`, `matplotlib`, and `jupyter`.
